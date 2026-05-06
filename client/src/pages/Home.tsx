@@ -5,87 +5,84 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, Zap, Users, GitBranch, Database, Server, Copy, CheckCircle, Clock, AlertTriangle, Download, Trash2, History } from 'lucide-react';
+import { AlertCircle, Zap, Database, Server, Users, GitBranch, Copy, CheckCircle, Clock, AlertTriangle, Download, Trash2, History } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   generateCoordinatorPrompt,
-  generateSpecialistPrompts,
-  validateSpecialistOutput,
-  calculateLinesOfCode,
-  determineComplexity,
+  generateDatabasePrompt,
+  generateBackendPrompt,
+  generateFrontendPrompt,
+  generateDevOpsPrompt,
+  extractCode,
+  extractJSON,
+  validateOutput,
+  calculateComplexity,
   extractDependencies,
   type ProjectContext,
-  type SpecialistRole
+  type SpecialistRole,
+  type SpecialistOutput,
+  type OrchestrationState
 } from '@/lib/orchestrator';
-import { generateMockResults } from '@/lib/mockData';
 import { saveProjectResult, getAllProjects, deleteProject, exportProjectAsFiles, formatDate, type ProjectResult } from '@/lib/storage';
-import { downloadFile, downloadFilesAsZip, copyToClipboard, generateMarkdownDoc } from '@/lib/export';
+import { downloadFile, downloadFilesAsZip, copyToClipboard } from '@/lib/export';
 
-type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
-
-interface SpecialistOutput {
-  role: SpecialistRole;
-  status: TaskStatus;
-  output: string;
-  metadata: {
-    lines_of_code: number;
-    complexity: 'low' | 'medium' | 'high';
-    dependencies: string[];
-  };
-}
-
-const SPECIALISTS = {
-  frontend: {
-    name: 'Frontend Specialist',
-    icon: Users,
-    color: 'bg-blue-100 text-blue-700',
-    description: 'UI/UX, React, Vue, Angular, responsive design'
-  },
-  backend: {
-    name: 'Backend Specialist',
-    icon: Server,
-    color: 'bg-green-100 text-green-700',
-    description: 'APIs, business logic, authentication, security'
-  },
-  devops: {
-    name: 'DevOps Specialist',
-    icon: GitBranch,
-    color: 'bg-purple-100 text-purple-700',
-    description: 'Infrastructure, CI/CD, deployment, monitoring'
-  },
+const SPECIALISTS: Record<SpecialistRole, { name: string; icon: any; color: string; description: string }> = {
   database: {
     name: 'Database Specialist',
     icon: Database,
     color: 'bg-orange-100 text-orange-700',
     description: 'Schema design, optimization, migrations'
+  },
+  backend: {
+    name: 'Backend Specialist',
+    icon: Server,
+    color: 'bg-green-100 text-green-700',
+    description: 'APIs, business logic, authentication'
+  },
+  frontend: {
+    name: 'Frontend Specialist',
+    icon: Users,
+    color: 'bg-blue-100 text-blue-700',
+    description: 'UI/UX, React, responsive design'
+  },
+  devops: {
+    name: 'DevOps Specialist',
+    icon: GitBranch,
+    color: 'bg-purple-100 text-purple-700',
+    description: 'Infrastructure, CI/CD, deployment'
   }
 };
 
+type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+interface SpecialistState {
+  status: TaskStatus;
+  output: SpecialistOutput | null;
+  error: string | null;
+}
+
 export default function Home() {
   const [apiKey, setApiKey] = useState('');
-  const [apiKeyValid, setApiKeyValid] = useState(false);
   const [projectTitle, setProjectTitle] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
   const [requirements, setRequirements] = useState('');
   const [techStack, setTechStack] = useState('');
   const [loading, setLoading] = useState(false);
-  const [useDemo, setUseDemo] = useState(false);
-  const [outputs, setOutputs] = useState<Record<SpecialistRole, SpecialistOutput>>({
-    frontend: { role: 'frontend', status: 'pending', output: '', metadata: { lines_of_code: 0, complexity: 'low', dependencies: [] } },
-    backend: { role: 'backend', status: 'pending', output: '', metadata: { lines_of_code: 0, complexity: 'low', dependencies: [] } },
-    devops: { role: 'devops', status: 'pending', output: '', metadata: { lines_of_code: 0, complexity: 'low', dependencies: [] } },
-    database: { role: 'database', status: 'pending', output: '', metadata: { lines_of_code: 0, complexity: 'low', dependencies: [] } }
-  });
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projects, setProjects] = useState<ProjectResult[]>(getAllProjects());
+  
+  const [specialists, setSpecialists] = useState<Record<SpecialistRole, SpecialistState>>({
+    database: { status: 'pending', output: null, error: null },
+    backend: { status: 'pending', output: null, error: null },
+    frontend: { status: 'pending', output: null, error: null },
+    devops: { status: 'pending', output: null, error: null }
+  });
 
-  const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setApiKey(value);
-    setApiKeyValid(value.trim().length > 0);
-  };
+  const callDeepSeekAPI = useCallback(async (systemPrompt: string, userPrompt: string): Promise<string> => {
+    if (!apiKey.trim()) {
+      throw new Error('API key is required');
+    }
 
-  const callDeepSeekAPI = useCallback(async (systemPrompt: string, userPrompt: string) => {
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
@@ -99,7 +96,7 @@ export default function Home() {
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.7,
-        max_tokens: 3000
+        max_tokens: 8000
       })
     });
 
@@ -112,9 +109,16 @@ export default function Home() {
     return data.choices[0].message.content;
   }, [apiKey]);
 
+  const updateSpecialistState = (role: SpecialistRole, updates: Partial<SpecialistState>) => {
+    setSpecialists(prev => ({
+      ...prev,
+      [role]: { ...prev[role], ...updates }
+    }));
+  };
+
   const handleGenerateProject = async () => {
-    if (!useDemo && !apiKey.trim()) {
-      toast.error('Please enter your DeepSeek API key or use Demo Mode');
+    if (!apiKey.trim()) {
+      toast.error('Please enter your DeepSeek API key');
       return;
     }
 
@@ -125,96 +129,156 @@ export default function Home() {
 
     setLoading(true);
     
-    const newOutputs = { ...outputs };
-    (Object.keys(SPECIALISTS) as SpecialistRole[]).forEach(role => {
-      newOutputs[role].status = 'processing';
-      newOutputs[role].output = '';
+    // Reset all specialists
+    Object.keys(SPECIALISTS).forEach(role => {
+      updateSpecialistState(role as SpecialistRole, { status: 'pending', output: null, error: null });
     });
-    setOutputs(newOutputs);
 
     try {
-      let results: Record<SpecialistRole, SpecialistOutput>;
+      const projectContext: ProjectContext = {
+        title: projectTitle,
+        description: projectDescription,
+        requirements,
+        techStack
+      };
 
-      if (useDemo) {
-        // Use mock data for demo
-        toast.info('Using Demo Mode with sample code...');
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate processing
-        const mockResults = generateMockResults();
-        results = mockResults as Record<SpecialistRole, SpecialistOutput>;
-      } else {
-        // Use real API
-        const projectContext: ProjectContext = {
-          title: projectTitle,
-          description: projectDescription,
-          requirements,
-          techStack
-        };
+      // Step 1: Coordinator Analysis
+      toast.info('🎼 Maestro analyzing project...');
+      updateSpecialistState('database', { status: 'processing' });
+      
+      const coordinatorPrompt = generateCoordinatorPrompt(projectContext);
+      const coordinatorResponse = await callDeepSeekAPI(
+        'You are an expert project coordinator. Analyze requirements and create a detailed breakdown.',
+        coordinatorPrompt
+      );
 
-        const coordinatorPrompt = generateCoordinatorPrompt(projectContext);
-        toast.info('Coordinator analyzing project...');
-        
-        const taskBreakdown = await callDeepSeekAPI(
-          'You are an expert project coordinator. Analyze requirements and create detailed task breakdowns for specialized teams.',
-          coordinatorPrompt
-        );
+      // Step 2: Database Specialist (generates schema)
+      toast.info('🗄️ Database specialist designing schema...');
+      const databasePrompt = generateDatabasePrompt(projectContext, coordinatorResponse);
+      const databaseResponse = await callDeepSeekAPI(
+        'You are a Senior Database Architect. Generate production-ready SQL code.',
+        databasePrompt
+      );
 
-        const specialists = ['frontend', 'backend', 'devops', 'database'] as const;
-        const specialistPromptsMap = generateSpecialistPrompts(projectContext, taskBreakdown);
-
-        toast.info('Specialists processing tasks...');
-
-        const specialistResponses = await Promise.all(
-          specialists.map(role =>
-            callDeepSeekAPI(
-              specialistPromptsMap[role].systemPrompt,
-              specialistPromptsMap[role].userPrompt
-            ).catch(error => {
-              console.error(`${role} specialist error:`, error);
-              return null;
-            })
-          )
-        );
-
-        results = {} as Record<SpecialistRole, SpecialistOutput>;
-        for (let i = 0; i < specialists.length; i++) {
-          const output = specialistResponses[i];
-          const role = specialists[i] as SpecialistRole;
-
-          if (!output) {
-            results[role] = {
-              role,
-              status: 'failed',
-              output: '',
-              metadata: { lines_of_code: 0, complexity: 'low', dependencies: [] }
-            };
-            continue;
-          }
-
-          const validation = validateSpecialistOutput(role, output);
-          results[role] = {
-            role,
-            status: validation.valid ? 'completed' : 'completed',
-            output,
-            metadata: {
-              lines_of_code: calculateLinesOfCode(output),
-              complexity: determineComplexity(output),
-              dependencies: extractDependencies(output)
-            }
-          };
-        }
+      const databaseCode = extractCode(databaseResponse);
+      const databaseValidation = validateOutput('database', databaseCode);
+      
+      if (!databaseValidation.valid) {
+        throw new Error(`Database validation failed: ${databaseValidation.issues.join(', ')}`);
       }
 
-      setOutputs(results);
+      const databaseOutput: SpecialistOutput = {
+        role: 'database',
+        code: databaseCode,
+        metadata: {
+          linesOfCode: databaseCode.split('\n').length,
+          complexity: calculateComplexity(databaseCode),
+          dependencies: extractDependencies(databaseCode),
+          timestamp: Date.now()
+        }
+      };
+
+      updateSpecialistState('database', { status: 'completed', output: databaseOutput });
+
+      // Step 3: Backend Specialist (uses database schema)
+      toast.info('🔌 Backend specialist building API...');
+      updateSpecialistState('backend', { status: 'processing' });
+      
+      const backendPrompt = generateBackendPrompt(projectContext, coordinatorResponse, databaseCode);
+      const backendResponse = await callDeepSeekAPI(
+        'You are a Senior Backend Engineer. Generate production-ready Node.js/Express code.',
+        backendPrompt
+      );
+
+      const backendCode = extractCode(backendResponse);
+      const backendValidation = validateOutput('backend', backendCode);
+      
+      if (!backendValidation.valid) {
+        throw new Error(`Backend validation failed: ${backendValidation.issues.join(', ')}`);
+      }
+
+      const backendOutput: SpecialistOutput = {
+        role: 'backend',
+        code: backendCode,
+        metadata: {
+          linesOfCode: backendCode.split('\n').length,
+          complexity: calculateComplexity(backendCode),
+          dependencies: extractDependencies(backendCode),
+          timestamp: Date.now()
+        }
+      };
+
+      updateSpecialistState('backend', { status: 'completed', output: backendOutput });
+
+      // Step 4: Frontend Specialist (uses backend API)
+      toast.info('🎨 Frontend specialist building UI...');
+      updateSpecialistState('frontend', { status: 'processing' });
+      
+      const frontendPrompt = generateFrontendPrompt(projectContext, coordinatorResponse, backendCode);
+      const frontendResponse = await callDeepSeekAPI(
+        'You are a Senior Frontend Engineer. Generate production-ready React/TypeScript code.',
+        frontendPrompt
+      );
+
+      const frontendCode = extractCode(frontendResponse);
+      const frontendValidation = validateOutput('frontend', frontendCode);
+      
+      if (!frontendValidation.valid) {
+        throw new Error(`Frontend validation failed: ${frontendValidation.issues.join(', ')}`);
+      }
+
+      const frontendOutput: SpecialistOutput = {
+        role: 'frontend',
+        code: frontendCode,
+        metadata: {
+          linesOfCode: frontendCode.split('\n').length,
+          complexity: calculateComplexity(frontendCode),
+          dependencies: extractDependencies(frontendCode),
+          timestamp: Date.now()
+        }
+      };
+
+      updateSpecialistState('frontend', { status: 'completed', output: frontendOutput });
+
+      // Step 5: DevOps Specialist (orchestrates everything)
+      toast.info('⚙️ DevOps specialist creating deployment configs...');
+      updateSpecialistState('devops', { status: 'processing' });
+      
+      const devopsPrompt = generateDevOpsPrompt(projectContext, coordinatorResponse, backendCode, frontendCode);
+      const devopsResponse = await callDeepSeekAPI(
+        'You are a Senior DevOps Engineer. Generate production-ready deployment configurations.',
+        devopsPrompt
+      );
+
+      const devopsCode = extractCode(devopsResponse);
+      const devopsValidation = validateOutput('devops', devopsCode);
+      
+      if (!devopsValidation.valid) {
+        throw new Error(`DevOps validation failed: ${devopsValidation.issues.join(', ')}`);
+      }
+
+      const devopsOutput: SpecialistOutput = {
+        role: 'devops',
+        code: devopsCode,
+        metadata: {
+          linesOfCode: devopsCode.split('\n').length,
+          complexity: calculateComplexity(devopsCode),
+          dependencies: extractDependencies(devopsCode),
+          timestamp: Date.now()
+        }
+      };
+
+      updateSpecialistState('devops', { status: 'completed', output: devopsOutput });
 
       // Save to storage
       const savedProject = saveProjectResult({
         title: projectTitle,
         description: projectDescription,
         results: {
-          frontend: results.frontend.output,
-          backend: results.backend.output,
-          devops: results.devops.output,
-          database: results.database.output
+          database: databaseCode,
+          backend: backendCode,
+          frontend: frontendCode,
+          devops: devopsCode
         },
         metadata: {
           requirements,
@@ -223,47 +287,43 @@ export default function Home() {
       });
 
       setProjects(getAllProjects());
-      toast.success('Project generation completed!');
+      toast.success('✨ Project generation completed!');
       setActiveTab('results');
     } catch (error) {
-      console.error('Error:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to generate project. Please try again.');
-      
-      (Object.keys(SPECIALISTS) as SpecialistRole[]).forEach(role => {
-        newOutputs[role].status = 'failed';
+      console.error('Orchestration error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate project';
+      toast.error(errorMessage);
+
+      // Mark all in-progress specialists as failed
+      Object.keys(SPECIALISTS).forEach(role => {
+        const state = specialists[role as SpecialistRole];
+        if (state.status === 'processing') {
+          updateSpecialistState(role as SpecialistRole, { status: 'failed', error: errorMessage });
+        }
       });
-      setOutputs(newOutputs);
     } finally {
       setLoading(false);
     }
   };
 
   const handleCopyOutput = async (role: SpecialistRole) => {
-    if (outputs[role].output) {
-      const success = await copyToClipboard(outputs[role].output);
+    const output = specialists[role].output;
+    if (output?.code) {
+      const success = await copyToClipboard(output.code);
       if (success) {
-        toast.success(`${SPECIALISTS[role].name} output copied!`);
+        toast.success(`${SPECIALISTS[role].name} code copied!`);
       }
     }
   };
 
   const handleExportProject = async () => {
-    const files = exportProjectAsFiles(projects[0]?.id);
+    if (!projects.length) return;
+    
+    const files = exportProjectAsFiles(projects[0].id);
     if (files) {
       await downloadFilesAsZip(files, projectTitle || 'orchestra-project');
       toast.success('Project exported as ZIP!');
     }
-  };
-
-  const handleDownloadMarkdown = () => {
-    const markdown = generateMarkdownDoc(projectTitle, projectDescription, {
-      frontend: outputs.frontend.output,
-      backend: outputs.backend.output,
-      devops: outputs.devops.output,
-      database: outputs.database.output
-    });
-    downloadFile(markdown, `${projectTitle || 'project'}.md`, 'text/markdown');
-    toast.success('Documentation downloaded!');
   };
 
   const handleDeleteProject = (id: string) => {
@@ -288,15 +348,13 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="container py-6">
           <h1 className="text-3xl font-bold tracking-tight font-mono">Orchestra Coder</h1>
-          <p className="text-sm text-muted-foreground mt-2">Professional code generation with specialist role orchestration</p>
+          <p className="text-sm text-muted-foreground mt-2">Professional code generation with true specialist orchestration</p>
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="container py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-4">
@@ -309,21 +367,21 @@ export default function Home() {
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-6">
             <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4 font-mono">System Overview</h2>
+              <h2 className="text-lg font-semibold mb-4 font-mono">Orchestration Status</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {(Object.entries(SPECIALISTS) as [SpecialistRole, typeof SPECIALISTS['frontend']][]).map(([role, specialist]) => {
+                {(Object.entries(SPECIALISTS) as [SpecialistRole, typeof SPECIALISTS['database']][]).map(([role, specialist]) => {
                   const Icon = specialist.icon;
-                  const output = outputs[role];
+                  const state = specialists[role];
                   return (
                     <div key={role} className={`p-4 rounded-lg border border-border ${specialist.color}`}>
                       <div className="flex items-start justify-between mb-2">
                         <Icon className="w-6 h-6" />
-                        {getStatusIcon(output.status)}
+                        {getStatusIcon(state.status)}
                       </div>
                       <h3 className="font-semibold text-sm">{specialist.name}</h3>
                       <p className="text-xs opacity-75 mt-1">{specialist.description}</p>
-                      {output.status === 'completed' && (
-                        <p className="text-xs mt-2 font-mono">{output.metadata.lines_of_code} lines</p>
+                      {state.output && (
+                        <p className="text-xs mt-2 font-mono">{state.output.metadata.linesOfCode} lines</p>
                       )}
                     </div>
                   );
@@ -343,16 +401,16 @@ export default function Home() {
                   <p className="text-2xl font-bold">
                     {projects.reduce((sum, p) => {
                       return sum + 
-                        p.results.frontend.split('\n').length +
+                        p.results.database.split('\n').length +
                         p.results.backend.split('\n').length +
-                        p.results.devops.split('\n').length +
-                        p.results.database.split('\n').length;
+                        p.results.frontend.split('\n').length +
+                        p.results.devops.split('\n').length;
                     }, 0)}
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Demo Mode</p>
-                  <p className="text-2xl font-bold">{useDemo ? '✓' : '✗'}</p>
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  <p className="text-2xl font-bold">{loading ? '⟳' : '✓'}</p>
                 </div>
               </div>
             </Card>
@@ -363,40 +421,25 @@ export default function Home() {
             <Card className="p-6">
               <h2 className="text-lg font-semibold mb-4 font-mono">API Configuration</h2>
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="demo-mode"
-                    checked={useDemo}
-                    onChange={(e) => setUseDemo(e.target.checked)}
-                    className="w-4 h-4"
-                  />
-                  <Label htmlFor="demo-mode" className="text-sm font-medium cursor-pointer">
-                    Use Demo Mode (with sample code)
+                <div>
+                  <Label htmlFor="api-key" className="text-sm font-medium">
+                    DeepSeek API Key
                   </Label>
+                  <Input
+                    id="api-key"
+                    type="password"
+                    placeholder="sk-..."
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="mt-2 font-mono text-sm"
+                  />
+                  {apiKey.trim() && (
+                    <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
+                      <span className="w-2 h-2 bg-green-600 rounded-full"></span>
+                      API key configured
+                    </p>
+                  )}
                 </div>
-
-                {!useDemo && (
-                  <div>
-                    <Label htmlFor="api-key" className="text-sm font-medium">
-                      DeepSeek API Key
-                    </Label>
-                    <Input
-                      id="api-key"
-                      type="password"
-                      placeholder="sk-..."
-                      value={apiKey}
-                      onChange={handleApiKeyChange}
-                      className="mt-2 input-minimal font-mono text-sm"
-                    />
-                    {apiKeyValid && (
-                      <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
-                        <span className="w-2 h-2 bg-green-600 rounded-full"></span>
-                        API key configured
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
             </Card>
 
@@ -412,7 +455,7 @@ export default function Home() {
                     placeholder="e.g., E-commerce Platform"
                     value={projectTitle}
                     onChange={(e) => setProjectTitle(e.target.value)}
-                    className="mt-2 input-minimal"
+                    className="mt-2"
                   />
                 </div>
 
@@ -425,7 +468,7 @@ export default function Home() {
                     placeholder="Describe your project in detail..."
                     value={projectDescription}
                     onChange={(e) => setProjectDescription(e.target.value)}
-                    className="mt-2 input-minimal font-mono text-sm min-h-24"
+                    className="mt-2 font-mono text-sm min-h-24"
                   />
                 </div>
 
@@ -438,7 +481,7 @@ export default function Home() {
                     placeholder="List specific features, constraints, or requirements..."
                     value={requirements}
                     onChange={(e) => setRequirements(e.target.value)}
-                    className="mt-2 input-minimal font-mono text-sm min-h-20"
+                    className="mt-2 font-mono text-sm min-h-20"
                   />
                 </div>
 
@@ -451,13 +494,13 @@ export default function Home() {
                     placeholder="e.g., React, Node.js, PostgreSQL, Docker"
                     value={techStack}
                     onChange={(e) => setTechStack(e.target.value)}
-                    className="mt-2 input-minimal font-mono text-sm"
+                    className="mt-2 font-mono text-sm"
                   />
                 </div>
 
                 <Button
                   onClick={handleGenerateProject}
-                  disabled={loading || (!useDemo && !apiKeyValid) || !projectTitle.trim() || !projectDescription.trim()}
+                  disabled={loading || !apiKey.trim() || !projectTitle.trim() || !projectDescription.trim()}
                   className="w-full bg-accent hover:bg-blue-700 text-white font-medium"
                 >
                   {loading ? (
@@ -478,23 +521,19 @@ export default function Home() {
 
           {/* Results Tab */}
           <TabsContent value="results" className="space-y-6">
-            {outputs.frontend.output && (
+            {specialists.database.output && (
               <Card className="p-4 bg-muted">
                 <div className="flex gap-3">
                   <Button onClick={handleExportProject} variant="outline" size="sm" className="gap-2">
                     <Download className="w-4 h-4" />
                     Export as ZIP
                   </Button>
-                  <Button onClick={handleDownloadMarkdown} variant="outline" size="sm" className="gap-2">
-                    <Download className="w-4 h-4" />
-                    Download Markdown
-                  </Button>
                 </div>
               </Card>
             )}
 
-            {(Object.entries(SPECIALISTS) as [SpecialistRole, typeof SPECIALISTS['frontend']][]).map(([role, specialist]) => {
-              const output = outputs[role];
+            {(Object.entries(SPECIALISTS) as [SpecialistRole, typeof SPECIALISTS['database']][]).map(([role, specialist]) => {
+              const state = specialists[role];
               const Icon = specialist.icon;
               return (
                 <Card key={role} className="p-6">
@@ -507,18 +546,18 @@ export default function Home() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {getStatusIcon(output.status)}
-                      <span className="text-xs font-medium capitalize">{output.status}</span>
+                      {getStatusIcon(state.status)}
+                      <span className="text-xs font-medium capitalize">{state.status}</span>
                     </div>
                   </div>
 
-                  {output.output && (
+                  {state.output && (
                     <>
                       <div className="flex items-center justify-between mb-3">
                         <div className="text-xs text-muted-foreground">
-                          <span className="font-mono">{output.metadata.lines_of_code} lines</span>
+                          <span className="font-mono">{state.output.metadata.linesOfCode} lines</span>
                           <span className="mx-2">•</span>
-                          <span className="capitalize">{output.metadata.complexity} complexity</span>
+                          <span className="capitalize">{state.output.metadata.complexity} complexity</span>
                         </div>
                         <Button
                           onClick={() => handleCopyOutput(role)}
@@ -531,18 +570,18 @@ export default function Home() {
                         </Button>
                       </div>
                       <pre className="bg-muted p-4 rounded-sm border border-border overflow-x-auto text-sm font-mono text-foreground max-h-96 overflow-y-auto">
-                        <code>{output.output}</code>
+                        <code>{state.output.code}</code>
                       </pre>
                     </>
                   )}
 
-                  {output.status === 'pending' && (
+                  {state.status === 'pending' && (
                     <div className="text-center py-8 text-muted-foreground">
-                      <p>Waiting for project generation...</p>
+                      <p>Waiting for orchestration...</p>
                     </div>
                   )}
 
-                  {output.status === 'processing' && (
+                  {state.status === 'processing' && (
                     <div className="text-center py-8">
                       <div className="inline-block animate-spin">
                         <Clock className="w-6 h-6 text-accent" />
@@ -551,10 +590,10 @@ export default function Home() {
                     </div>
                   )}
 
-                  {output.status === 'failed' && (
+                  {state.status === 'failed' && (
                     <div className="text-center py-8 text-red-600">
                       <AlertTriangle className="w-6 h-6 mx-auto mb-2" />
-                      <p>Failed to generate output</p>
+                      <p>{state.error || 'Failed to generate output'}</p>
                     </div>
                   )}
                 </Card>

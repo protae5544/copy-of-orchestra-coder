@@ -1,24 +1,11 @@
 /**
- * Orchestra Coder - Orchestrator Utilities
- * Handles Coordinator logic, task decomposition, and specialist management
+ * Orchestra Coder - Core Orchestration Engine
+ * 
+ * Implements TRUE orchestration with sequential specialist execution and context sharing.
+ * Each specialist builds on previous outputs, creating integrated, production-ready code.
  */
 
-export type SpecialistRole = 'frontend' | 'backend' | 'devops' | 'database';
-export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
-
-export interface TaskBreakdown {
-  frontend_tasks: string;
-  backend_tasks: string;
-  devops_tasks: string;
-  database_tasks: string;
-  dependencies: string[];
-}
-
-export interface SpecialistPrompt {
-  role: SpecialistRole;
-  systemPrompt: string;
-  userPrompt: string;
-}
+export type SpecialistRole = 'database' | 'backend' | 'frontend' | 'devops';
 
 export interface ProjectContext {
   title: string;
@@ -27,297 +14,402 @@ export interface ProjectContext {
   techStack: string;
 }
 
+export interface SpecialistOutput {
+  role: SpecialistRole;
+  code: string;
+  metadata: {
+    linesOfCode: number;
+    complexity: 'low' | 'medium' | 'high';
+    dependencies: string[];
+    timestamp: number;
+  };
+}
+
+export interface OrchestrationState {
+  database: SpecialistOutput | null;
+  backend: SpecialistOutput | null;
+  frontend: SpecialistOutput | null;
+  devops: SpecialistOutput | null;
+}
+
 /**
- * Generate Coordinator analysis prompt
- * Analyzes project requirements and creates task breakdown
+ * Generate coordinator analysis prompt
+ * The Maestro analyzes the project and creates a comprehensive breakdown
  */
 export function generateCoordinatorPrompt(context: ProjectContext): string {
-  return `You are the Coordinator (Maestro) for a professional code generation team. 
+  return `You are the Maestro Coordinator for a professional code generation orchestra.
 
-Project Requirements:
+Your job is to analyze the project requirements and create a DETAILED breakdown that will guide each specialist.
+
+PROJECT DETAILS:
 Title: ${context.title}
 Description: ${context.description}
 Requirements: ${context.requirements || 'Not specified'}
-Tech Stack: ${context.techStack || 'Your choice'}
+Tech Stack: ${context.techStack || 'Your recommendation'}
 
-Analyze this project and create a comprehensive breakdown for each specialist:
-1. Frontend Specialist - UI/UX components, responsive design, state management
-2. Backend Specialist - API endpoints, business logic, authentication, database integration
-3. DevOps Specialist - Deployment configuration, CI/CD pipelines, infrastructure
-4. Database Specialist - Schema design, migrations, optimization, indexing
-
-Provide a detailed JSON response with this structure:
+Create a comprehensive analysis in JSON format:
 {
-  "frontend_tasks": "specific frontend requirements, component structure, and implementation details",
-  "backend_tasks": "specific backend requirements, API design, and business logic",
-  "devops_tasks": "specific devops requirements, deployment, and infrastructure",
-  "database_tasks": "specific database requirements, schema, and migrations",
-  "dependencies": ["list of dependencies between tasks"],
-  "architecture_notes": "overall architecture considerations"
+  "architecture_overview": "High-level system architecture and design patterns",
+  "database_design": {
+    "tables": "List of required database tables and their purposes",
+    "relationships": "Key relationships and constraints",
+    "indexes": "Performance optimization strategy"
+  },
+  "backend_api": {
+    "endpoints": "Complete list of required API endpoints with methods and purposes",
+    "authentication": "Authentication strategy and middleware",
+    "business_logic": "Key business logic components"
+  },
+  "frontend_components": {
+    "pages": "List of required pages/views",
+    "components": "Reusable component structure",
+    "state_management": "State management approach"
+  },
+  "devops_requirements": {
+    "deployment": "Deployment strategy and environments",
+    "ci_cd": "CI/CD pipeline requirements",
+    "monitoring": "Monitoring and logging requirements"
+  },
+  "integration_points": "Critical integration points between components",
+  "tech_stack_recommendation": "Recommended technologies if not specified"
 }
 
-Be specific and detailed so each specialist can generate production-ready code.`;
+Be VERY specific and detailed. Each specialist will use this to generate code that integrates perfectly.`;
 }
 
 /**
- * Generate specialist prompts based on coordinator breakdown
+ * Generate database specialist prompt
+ * Database is first - it defines the schema that backend depends on
  */
-export function generateSpecialistPrompts(
+export function generateDatabasePrompt(
   context: ProjectContext,
-  taskBreakdown: string
-): Record<SpecialistRole, SpecialistPrompt> {
-  return {
-    frontend: {
-      role: 'frontend',
-      systemPrompt: 'You are a Professional Frontend Specialist with expertise in React, TypeScript, responsive design, and modern UI patterns. Generate production-ready code.',
-      userPrompt: `Based on this project breakdown, generate professional React/TypeScript code for the user interface:
+  coordinatorAnalysis: string
+): string {
+  return `You are a Senior Database Architect specialist.
 
-Project: ${context.title}
-Description: ${context.description}
+Your role is to design the database schema that will support the entire application.
 
-Task Breakdown:
-${taskBreakdown}
+PROJECT CONTEXT:
+${coordinatorAnalysis}
 
-Requirements:
-- Use React 19 with TypeScript
-- Implement proper component structure and composition
-- Use Tailwind CSS for styling
-- Implement state management (useState, useContext)
-- Ensure responsive design (mobile-first)
-- Add proper error handling and loading states
-- Include accessibility features (ARIA labels, keyboard navigation)
-- Use React hooks best practices
+REQUIREMENTS:
+1. Design a normalized, production-ready database schema
+2. Include ALL tables needed by the application
+3. Define proper relationships, constraints, and indexes
+4. Create migration scripts (up/down)
+5. Include seed data for testing
+6. Optimize for performance
+7. Add comments explaining design decisions
 
-Generate clean, production-ready frontend code with:
-1. Well-structured React components
-2. Proper TypeScript typing
-3. State management patterns
-4. Responsive layout
-5. Error boundaries
-6. Loading and empty states`
-    },
-    backend: {
-      role: 'backend',
-      systemPrompt: 'You are a Professional Backend Specialist with expertise in API design, business logic, security, and database integration. Generate production-ready code.',
-      userPrompt: `Based on this project breakdown, generate professional backend code:
+OUTPUT FORMAT:
+Provide COMPLETE, production-ready SQL code including:
+- CREATE TABLE statements with all columns, types, constraints
+- FOREIGN KEY relationships
+- Indexes for performance
+- CHECK constraints where needed
+- DEFAULT values
+- Comments explaining each table's purpose
 
-Project: ${context.title}
-Description: ${context.description}
-
-Task Breakdown:
-${taskBreakdown}
-
-Requirements:
-- Use Node.js with Express or similar framework
-- Implement RESTful API endpoints
-- Add proper error handling and validation
-- Include authentication/authorization logic
-- Implement database integration
-- Add logging and monitoring
-- Follow security best practices
-- Include API documentation
-
-Generate clean, production-ready backend code with:
-1. Well-designed API endpoints
-2. Request validation and error handling
-3. Authentication and authorization
-4. Database queries and migrations
-5. Middleware implementation
-6. Environment configuration
-7. Security measures (input validation, CORS, etc.)`
-    },
-    devops: {
-      role: 'devops',
-      systemPrompt: 'You are a Professional DevOps Specialist with expertise in Docker, Kubernetes, CI/CD, and infrastructure. Generate production-ready configurations.',
-      userPrompt: `Based on this project breakdown, generate professional DevOps configurations:
-
-Project: ${context.title}
-Description: ${context.description}
-
-Task Breakdown:
-${taskBreakdown}
-
-Requirements:
-- Create Docker configuration for containerization
-- Implement CI/CD pipeline configuration (GitHub Actions, GitLab CI, or similar)
-- Configure environment management
-- Add monitoring and logging setup
-- Implement health checks
-- Create deployment scripts
-- Add security scanning
-
-Generate production-ready DevOps configurations with:
-1. Dockerfile with multi-stage builds
-2. Docker Compose for local development
-3. CI/CD pipeline configuration
-4. Environment variable management
-5. Health checks and monitoring
-6. Deployment automation
-7. Security scanning and compliance`
-    },
-    database: {
-      role: 'database',
-      systemPrompt: 'You are a Professional Database Specialist with expertise in schema design, optimization, and migrations. Generate production-ready database code.',
-      userPrompt: `Based on this project breakdown, generate professional database code:
-
-Project: ${context.title}
-Description: ${context.description}
-
-Task Breakdown:
-${taskBreakdown}
-
-Requirements:
-- Design normalized database schema
-- Create migration scripts
-- Add indexes for optimization
-- Implement foreign keys and constraints
-- Add seed data scripts
-- Include backup strategies
-- Optimize queries
-
-Generate production-ready database code with:
-1. SQL schema with proper normalization
-2. Table relationships and constraints
-3. Indexes for performance
-4. Migration scripts (up/down)
-5. Seed data for testing
-6. Query optimization examples
-7. Backup and recovery procedures`
-    }
-  };
+The backend specialist will depend on this schema, so be THOROUGH and COMPLETE.
+Include at least 5-10 tables for a realistic application.`;
 }
 
 /**
- * Parse coordinator response
+ * Generate backend specialist prompt
+ * Backend is second - it uses database schema and defines API contracts
  */
-export function parseCoordinatorResponse(response: string): TaskBreakdown {
-  try {
-    // Try to extract JSON from response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-  } catch (error) {
-    console.error('Failed to parse coordinator response:', error);
-  }
+export function generateBackendPrompt(
+  context: ProjectContext,
+  coordinatorAnalysis: string,
+  databaseSchema: string
+): string {
+  return `You are a Senior Backend Engineer specialist.
 
-  // Fallback: create default breakdown
-  return {
-    frontend_tasks: response,
-    backend_tasks: response,
-    devops_tasks: response,
-    database_tasks: response,
-    dependencies: []
-  };
+Your role is to design and implement the backend API that will serve the frontend.
+
+PROJECT CONTEXT:
+${coordinatorAnalysis}
+
+DATABASE SCHEMA (that you must work with):
+${databaseSchema}
+
+REQUIREMENTS:
+1. Design RESTful API endpoints based on the coordinator's specification
+2. Implement proper request validation and error handling
+3. Create database integration code using the provided schema
+4. Implement authentication/authorization
+5. Add middleware for logging, error handling, CORS
+6. Include comprehensive error responses
+7. Add API documentation comments
+
+OUTPUT FORMAT:
+Provide production-ready Node.js/Express code including:
+- Complete Express app setup
+- All required endpoints with proper HTTP methods
+- Request validation using express-validator or similar
+- Database queries that match the schema
+- Error handling middleware
+- Authentication middleware
+- CORS and security headers
+- Comprehensive comments
+
+The frontend specialist will depend on your API contracts, so define them CLEARLY.
+Include at least 10-15 endpoints for a realistic application.`;
 }
 
 /**
- * Validate specialist output quality
+ * Generate frontend specialist prompt
+ * Frontend is third - it uses backend API and implements the UI
  */
-export function validateSpecialistOutput(
-  role: SpecialistRole,
-  output: string
-): { valid: boolean; score: number; issues: string[] } {
-  const issues: string[] = [];
-  let score = 100;
+export function generateFrontendPrompt(
+  context: ProjectContext,
+  coordinatorAnalysis: string,
+  backendCode: string
+): string {
+  return `You are a Senior Frontend Engineer specialist.
 
-  // Check minimum length
-  if (output.length < 100) {
-    issues.push('Output too short');
-    score -= 20;
-  }
+Your role is to build the user interface that consumes the backend API.
 
-  // Check for code blocks
-  if (!output.includes('```') && !output.includes('{') && !output.includes('SELECT')) {
-    issues.push('No code detected');
-    score -= 15;
-  }
+PROJECT CONTEXT:
+${coordinatorAnalysis}
 
-  // Role-specific validation
-  switch (role) {
-    case 'frontend':
-      if (!output.toLowerCase().includes('react') && !output.toLowerCase().includes('component')) {
-        issues.push('Missing React/component references');
-        score -= 10;
-      }
-      break;
-    case 'backend':
-      if (!output.toLowerCase().includes('api') && !output.toLowerCase().includes('endpoint')) {
-        issues.push('Missing API/endpoint references');
-        score -= 10;
-      }
-      break;
-    case 'devops':
-      if (!output.toLowerCase().includes('docker') && !output.toLowerCase().includes('deploy')) {
-        issues.push('Missing deployment references');
-        score -= 10;
-      }
-      break;
-    case 'database':
-      if (!output.toLowerCase().includes('create') && !output.toLowerCase().includes('table')) {
-        issues.push('Missing database schema references');
-        score -= 10;
-      }
-      break;
-  }
+BACKEND API (that you must consume):
+${backendCode}
 
-  return {
-    valid: score >= 60,
-    score: Math.max(0, score),
-    issues
-  };
+REQUIREMENTS:
+1. Create React components for all pages specified in the coordinator's analysis
+2. Implement proper state management (useState, useContext, or similar)
+3. Create API client code that matches the backend endpoints
+4. Implement error handling and loading states
+5. Add form validation
+6. Ensure responsive design (mobile-first)
+7. Implement proper TypeScript types
+
+OUTPUT FORMAT:
+Provide production-ready React/TypeScript code including:
+- React components for all pages
+- Custom hooks for API calls and state management
+- TypeScript interfaces for all data types
+- Error boundaries and error handling
+- Loading and empty states
+- Form components with validation
+- Responsive Tailwind CSS styling
+- Comprehensive comments
+
+Extract the API endpoints from the backend code and implement proper client code to consume them.
+Include at least 5-8 pages/major components for a realistic application.`;
 }
 
 /**
- * Calculate lines of code
+ * Generate DevOps specialist prompt
+ * DevOps is last - it deploys everything together
  */
-export function calculateLinesOfCode(output: string): number {
-  return output.split('\n').filter(line => line.trim().length > 0).length;
+export function generateDevOpsPrompt(
+  context: ProjectContext,
+  coordinatorAnalysis: string,
+  backendCode: string,
+  frontendCode: string
+): string {
+  return `You are a Senior DevOps Engineer specialist.
+
+Your role is to create deployment configurations and infrastructure code.
+
+PROJECT CONTEXT:
+${coordinatorAnalysis}
+
+BACKEND CODE (that you must containerize):
+${backendCode}
+
+FRONTEND CODE (that you must build and serve):
+${frontendCode}
+
+REQUIREMENTS:
+1. Create Dockerfile with multi-stage builds for both frontend and backend
+2. Create docker-compose.yml for local development
+3. Create CI/CD pipeline configuration (GitHub Actions)
+4. Set up environment management
+5. Create health checks and monitoring setup
+6. Add security scanning and best practices
+7. Create deployment automation scripts
+
+OUTPUT FORMAT:
+Provide production-ready DevOps configurations including:
+- Dockerfile for backend (Node.js)
+- Dockerfile for frontend (React build)
+- docker-compose.yml for development
+- .github/workflows/ci-cd.yml for GitHub Actions
+- .env.example with all required variables
+- Health check scripts
+- Deployment documentation
+- Security best practices
+
+Make sure the configurations work with the actual code provided above.
+Include proper logging, monitoring, and error handling.`;
 }
 
 /**
- * Determine complexity level
+ * Calculate complexity based on code analysis
  */
-export function determineComplexity(output: string): 'low' | 'medium' | 'high' {
-  const lines = calculateLinesOfCode(output);
-  const hasAdvancedPatterns = /async|await|promise|class|interface|type|generic|decorator/.test(output);
-  const hasComplexLogic = /for|while|if.*else|switch|map|filter|reduce/.test(output);
+export function calculateComplexity(code: string): 'low' | 'medium' | 'high' {
+  const lines = code.split('\n').filter(l => l.trim().length > 0).length;
+  const hasAsync = /async|await|promise/i.test(code);
+  const hasClasses = /class\s+\w+|interface\s+\w+|type\s+\w+/i.test(code);
+  const hasComplexLogic = /for|while|if.*else|switch|map|filter|reduce|recursion/i.test(code);
 
-  if (lines > 500 && hasAdvancedPatterns && hasComplexLogic) {
+  if (lines > 400 && (hasAsync || hasClasses) && hasComplexLogic) {
     return 'high';
-  } else if (lines > 200 || (hasAdvancedPatterns && hasComplexLogic)) {
+  } else if (lines > 200 || (hasAsync && hasComplexLogic)) {
     return 'medium';
   }
   return 'low';
 }
 
 /**
- * Extract dependencies from output
+ * Extract dependencies from code
  */
-export function extractDependencies(output: string): string[] {
-  const dependencies = new Set<string>();
+export function extractDependencies(code: string): string[] {
+  const deps = new Set<string>();
 
-  // Extract npm packages
-  const npmMatch = output.match(/import.*from\s['"]([^'"]+)['"]/g);
-  if (npmMatch) {
-    npmMatch.forEach(match => {
+  // ES6 imports
+  const importMatches = code.match(/import\s+(?:{[^}]*}|[^;]+)\s+from\s+['"]([^'"]+)['"]/g);
+  if (importMatches) {
+    importMatches.forEach(match => {
       const pkg = match.match(/['"]([^'"]+)['"]/)?.[1];
-      if (pkg && !pkg.startsWith('.')) {
-        dependencies.add(pkg);
+      if (pkg && !pkg.startsWith('.') && !pkg.startsWith('@/')) {
+        deps.add(pkg);
       }
     });
   }
 
-  // Extract other references
-  const requireMatch = output.match(/require\(['"]([^'"]+)['"]\)/g);
-  if (requireMatch) {
-    requireMatch.forEach(match => {
+  // CommonJS requires
+  const requireMatches = code.match(/require\(['"]([^'"]+)['"]\)/g);
+  if (requireMatches) {
+    requireMatches.forEach(match => {
       const pkg = match.match(/['"]([^'"]+)['"]/)?.[1];
       if (pkg && !pkg.startsWith('.')) {
-        dependencies.add(pkg);
+        deps.add(pkg);
       }
     });
   }
 
-  return Array.from(dependencies);
+  return Array.from(deps);
+}
+
+/**
+ * Validate specialist output quality
+ */
+export function validateOutput(role: SpecialistRole, code: string): {
+  valid: boolean;
+  score: number;
+  issues: string[];
+} {
+  const issues: string[] = [];
+  let score = 100;
+
+  // Minimum length check
+  if (code.length < 500) {
+    issues.push('Output too short (< 500 characters)');
+    score -= 30;
+  }
+
+  // Must have actual code
+  if (!code.includes('{') && !code.includes('CREATE TABLE') && !code.includes('SELECT')) {
+    issues.push('No code structure detected');
+    score -= 25;
+  }
+
+  // Role-specific validation
+  switch (role) {
+    case 'database':
+      if (!code.toUpperCase().includes('CREATE TABLE')) {
+        issues.push('Missing CREATE TABLE statements');
+        score -= 20;
+      }
+      if (!code.toUpperCase().includes('PRIMARY KEY')) {
+        issues.push('Missing PRIMARY KEY definitions');
+        score -= 15;
+      }
+      break;
+
+    case 'backend':
+      if (!code.includes('app.') && !code.includes('router.')) {
+        issues.push('Missing Express app or router setup');
+        score -= 20;
+      }
+      if (!code.match(/app\.(get|post|put|delete|patch)/i)) {
+        issues.push('Missing API endpoints');
+        score -= 20;
+      }
+      break;
+
+    case 'frontend':
+      if (!code.includes('export') || !code.includes('function') && !code.includes('=>')) {
+        issues.push('Missing React component exports');
+        score -= 20;
+      }
+      if (!code.includes('useState') && !code.includes('useEffect') && !code.includes('fetch')) {
+        issues.push('Missing React hooks or API calls');
+        score -= 15;
+      }
+      break;
+
+    case 'devops':
+      if (!code.includes('FROM') && !code.includes('version:')) {
+        issues.push('Missing Docker or docker-compose configuration');
+        score -= 20;
+      }
+      break;
+  }
+
+  return {
+    valid: score >= 50,
+    score: Math.max(0, score),
+    issues
+  };
+}
+
+/**
+ * Parse JSON from LLM response (handles markdown code blocks)
+ */
+export function extractJSON(text: string): Record<string, any> | null {
+  try {
+    // Try direct JSON parsing first
+    return JSON.parse(text);
+  } catch {
+    // Try extracting from markdown code blocks
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[1]);
+      } catch {
+        // Fall through
+      }
+    }
+
+    // Try finding JSON object in text
+    const objectMatch = text.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]);
+      } catch {
+        // Fall through
+      }
+    }
+
+    return null;
+  }
+}
+
+/**
+ * Extract code from LLM response (handles markdown code blocks)
+ */
+export function extractCode(text: string): string {
+  // Try to extract from markdown code blocks
+  const codeMatch = text.match(/```(?:[\w]+)?\s*([\s\S]*?)```/);
+  if (codeMatch) {
+    return codeMatch[1].trim();
+  }
+
+  // If no code block, return the text as-is (might be plain code)
+  return text.trim();
 }
