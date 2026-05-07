@@ -7,8 +7,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertCircle, Zap, Database, Server, Users, GitBranch, Copy, CheckCircle, Clock, AlertTriangle, Download, Trash2, History } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import {
   generateCoordinatorPrompt,
   generateDatabasePrompt,
@@ -64,8 +62,6 @@ interface SpecialistState {
 }
 
 export default function Home() {
-  const { user, isAuthenticated } = useAuth();
-
   const [apiKey, setApiKey] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
